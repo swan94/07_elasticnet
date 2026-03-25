@@ -254,11 +254,13 @@ Let's create a model specification that will **fine-tune** these for us.
 A given model type can be fit with different engines (e.g., through different packages). Here, we'll use the **glmnet** engine/package.  
   
 ```{r enet_spec}
-enet_spec  
+enet_spec  <-
   # Specifying linear regression as our model type, asking to tune the hyperparameters
-
+  linear_reg(penalty = tune(),
+             mixture = tune()
+             ) %>%
   # Specify the engine
-
+  set_engine("glmnet")
 
 enet_spec
 ```
@@ -281,7 +283,11 @@ enet_grid
 Our grid has **121** potential combinations of mixture and penalty.
 
 ```{r}
-
+ggplot(data = enet_grid,
+       aes(x = mixture,
+           y = penalty)
+       ) +
+  geom_point()
 ```
 
 For our grid search, we need:  
@@ -292,7 +298,8 @@ For our grid search, we need:
   
 Let's define our resampling strategy below, using a 10-fold cross validation approach:  
 ```{r resampling_foldcv}
-resampling_foldcv 
+resampling_foldcv <- vfold_cv(weather_train,
+                              v = 10)
 
 resampling_foldcv
 resampling_foldcv$splits[[1]]
@@ -301,7 +308,11 @@ On each fold, we'll use **437** observations for training and **49** observation
 
 Now, let's perform the grid search below:  
 ```{r enet_grid_result}
-enet_grid_result 
+enet_grid_result <- tune_grid(enet_spec,
+                              preprocessor = weather_recipe,
+                              grid = enet_grid,
+                              resamples = resampling_foldcv
+                              )
 
 enet_grid_result
 
@@ -315,7 +326,7 @@ Let's collect a summary of metrics (across all folds, for each mixture x penalty
 Firs, RMSE (lower is better):
 ```{r RMSE}
 enet_grid_result %>%
-  ... 
+  collect_metrics() %>%
   filter(.metric == "rmse") %>%
   ggplot(aes(x = penalty, 
              y = mean, 
@@ -350,14 +361,16 @@ It seems that our best model is with hyperparameters set to:
 Let's extract the hyperparameters from the best model as judged by 2 performance metrics:  
 ```{r}
 # Based on lowest RMSE
-best_rmse 
+best_rmse <- enet_grid_result %>%
+  select_best(metric = "rmse")
 
 best_rmse
 ```
 
 ```{r}
 # Based on greatest R2
-best_r2 
+best_r2 <- enet_grid_result %>%
+  select_best(metric = "rsq")
 
 best_r2
 
@@ -369,7 +382,10 @@ Based on R2, we would choose mixture = 0, penalty = 0.7.
 Let's use the hyperparameter values that optimized R2 to fit our final model.
 
 ```{r final_spec}
-final_spec 
+final_spec <- linear_reg(penalty = 0.7,
+                         mixture = 0
+                         ) %>%
+  set_engine("glmnet")
 
 final_spec
 ```
@@ -384,7 +400,10 @@ This means 2 things:
 These 2 steps can be completed in one function, as below:  
 
 ```{r final_fit}
-final_fit 
+final_fit <- last_fit(final_spec,
+                      weather_recipe,
+                      split = weather_split
+                      )
 
 final_fit %>%
   collect_predictions()
@@ -393,7 +412,8 @@ Why 212 observations?
 
 Metrics on the **test set**:
 ```{r}
-
+final_fit %>%
+  collect_metrics()
 ```
 
 Metrics on **train set** (for curiosity and compare to test set):  
@@ -428,11 +448,11 @@ Why?
 Predicted vs. observed plot:  
 ```{r}
 final_fit %>%
-  ...
-  ggplot(aes(x = ...,
-             y = ...)) +
+  collect_predictions() %>%
+  ggplot(aes(x = strength_gtex,
+             y = .pred)) +
   geom_point() +
-  geom_...() +
+  geom_abline() +
   geom_smooth(method = "lm") +
   scale_x_continuous(limits = c(20, 40)) +
   scale_y_continuous(limits = c(20, 40)) 
@@ -442,7 +462,9 @@ Coefficients:
 ```{r}
 final_spec %>%
   fit(strength_gtex ~ .,
-         data = bake(weather_prep, weather)) 
+         data = bake(weather_prep, weather)) %>%
+  tidy() %>%
+  arrange(desc(estimate))
 
 ```
 
@@ -451,7 +473,7 @@ Variable importance:
 final_spec %>%
   fit(strength_gtex ~ .,
          data = bake(weather_prep, weather)) %>%
-    ... %>%
+    vi() %>%
   mutate(
     Importance = abs(Importance),
     Variable = fct_reorder(Variable, 
